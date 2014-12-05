@@ -218,7 +218,7 @@ MTU=$(ip link show $IFNAME | awk '{print $5}')
 [ $IFTYPE = bridge ] && {
     LOCAL_IFNAME="v${CONTAINER_IFNAME}pl${NSPID}"
     GUEST_IFNAME="v${CONTAINER_IFNAME}pg${NSPID}"
-    ip link add name $LOCAL_IFNAME mtu $MTU type veth peer name $GUEST_IFNAME mtu $MTU
+    ip link add name $LOCAL_IFNAME txqueuelen 0 mtu $MTU type veth peer name $GUEST_IFNAME  txqueuelen 0 mtu $MTU
     case "$BRTYPE" in
         linux)
             (ip link set $LOCAL_IFNAME master $IFNAME > /dev/null 2>&1) || (brctl addif $IFNAME $LOCAL_IFNAME)
