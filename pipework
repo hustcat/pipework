@@ -9,6 +9,13 @@ esac
 
 IFNAME=$1
 
+VF_INDEX=
+VF_IFNAME=
+if [ "$2" = "--vf" ]; then
+  VF_INDEX=$3
+  shift 2
+fi
+
 # default value set further down if not set here
 CONTAINER_IFNAME=
 if [ "$2" = "-i" ]; then
@@ -30,8 +37,8 @@ fi
 
 [ "$IPADDR" ] || [ "$WAIT" ] || {
     echo "Syntax:"
-    echo "pipework <hostinterface> [-i containerinterface] <guest> <ipaddr>/<subnet>[@default_gateway] [macaddr][@vlan]"
-    echo "pipework <hostinterface> [-i containerinterface] <guest> dhcp [macaddr][@vlan]"
+    echo "pipework <hostinterface> [--vf vf_index] [-i containerinterface] <guest> <ipaddr>/<subnet>[@default_gateway] [macaddr][@vlan]"
+    echo "pipework <hostinterface> [--vf vf_index] [-i containerinterface] <guest> dhcp [macaddr][@vlan]"
     echo "pipework --wait [-i containerinterface]"
     exit 1
 }
@@ -54,6 +61,22 @@ if [ -z "$WAIT" ]; then
             # The IPoIB kernel module is fussy, set device name to ib0 if not overridden
             CONTAINER_IFNAME=${CONTAINER_IFNAME:-ib0}
         else IFTYPE=phys
+            if [ "$VF_INDEX" ]
+            then
+                VF_PATH="/sys/class/net/$IFNAME/device/virtfn$VF_INDEX/net/"
+                if [ -d $VF_PATH ] 
+                then
+                    VF_IFNAME=$(ls "$VF_PATH")
+                    if [ ! -d /sys/class/net/$VF_IFNAME ]
+                    then
+                        echo "VF: $VF_IFNAME interface is not exist"
+                        exit 1
+                    fi
+                else
+                    echo "VF: $VF_PATH is not exist"
+                    exit 1                    
+                fi
+            fi
         fi
     else
         case "$IFNAME" in
@@ -218,7 +241,7 @@ MTU=$(ip link show $IFNAME | awk '{print $5}')
 [ $IFTYPE = bridge ] && {
     LOCAL_IFNAME="v${CONTAINER_IFNAME}pl${NSPID}"
     GUEST_IFNAME="v${CONTAINER_IFNAME}pg${NSPID}"
-    ip link add name $LOCAL_IFNAME mtu $MTU type veth peer name $GUEST_IFNAME mtu $MTU
+    ip link add name $LOCAL_IFNAME txqueuelen 0 mtu $MTU type veth peer name $GUEST_IFNAME txqueuelen 0 mtu $MTU
     case "$BRTYPE" in
         linux)
             (ip link set $LOCAL_IFNAME master $IFNAME > /dev/null 2>&1) || (brctl addif $IFNAME $LOCAL_IFNAME)
@@ -240,19 +263,29 @@ MTU=$(ip link show $IFNAME | awk '{print $5}')
 }
 
 # If it's a physical interface, create a macvlan subinterface
-[ $IFTYPE = phys ] && {
-    [ "$VLAN" ] && {
-        [ ! -d /sys/class/net/$IFNAME.$VLAN ] && {
-            ip link add link $IFNAME name $IFNAME.$VLAN mtu $MTU type vlan id $VLAN
-        }
+if [ $IFTYPE = phys ]
+then
+    if [ -z "$VF_INDEX" ]
+    then
+        [ "$VLAN" ] && {
+            [ ! -d /sys/class/net/$IFNAME.$VLAN ] && {
+                ip link add link $IFNAME name $IFNAME.$VLAN mtu $MTU type vlan id $VLAN
+            }
 
+            ip link set $IFNAME up
+            IFNAME=$IFNAME.$VLAN
+        }
+        GUEST_IFNAME=ph$NSPID$CONTAINER_IFNAME
+        ip link add link $IFNAME dev $GUEST_IFNAME mtu $MTU type macvlan mode bridge
         ip link set $IFNAME up
-        IFNAME=$IFNAME.$VLAN
-    }
-    GUEST_IFNAME=ph$NSPID$CONTAINER_IFNAME
-    ip link add link $IFNAME dev $GUEST_IFNAME mtu $MTU type macvlan mode bridge
-    ip link set $IFNAME up
-}
+    else
+        if [ "$VLAN" ]
+        then
+            ip link set $IFNAME vf $VF_INDEX vlan $VLAN
+        fi
+        GUEST_IFNAME=$VF_IFNAME
+    fi
+fi
 
 ip link set $GUEST_IFNAME netns $NSPID
 ip netns exec $NSPID ip link set $GUEST_IFNAME name $CONTAINER_IFNAME
