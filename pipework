@@ -67,7 +67,7 @@ if [ -z "$WAIT" ]; then
                 if [ -d $VF_PATH ] 
                 then
                     VF_IFNAME=$(ls "$VF_PATH")
-                    if [ ! -d /sys/class/net/$VF_IFNAME ]
+                    if [ "$VF_IFNAME" = "" ] || [ ! -d /sys/class/net/$VF_IFNAME ]
                     then
                         echo "VF: $VF_IFNAME interface is not exist"
                         exit 1
@@ -284,6 +284,7 @@ then
             ip link set $IFNAME vf $VF_INDEX vlan $VLAN
         fi
         GUEST_IFNAME=$VF_IFNAME
+        ip link set $GUEST_IFNAME up
     fi
 fi
 
